@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/xml"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"path"
@@ -22,6 +23,7 @@ type Packages struct {
 	Packages []Package `xml:"package"`
 }
 
+// PackagesState contains dependencies found in package
 type PackagesState struct {
 	dependencies map[string][]Package
 }
@@ -56,66 +58,57 @@ func main() {
 	flag.Parse()
 
 	state := createPackagesState()
-	file, err := os.Open(*baseDir)
-	if err != nil {
-		log.Fatal(err)
-		os.Exit(1)
-	}
-	processDir(file, state)
+
+	processDir(*baseDir, state)
 	deps := reconcileDependencies(state.dependencies)
-	//log.Println(deps)
+	reportProblems(deps)
+}
+
+func reportProblems(deps map[string]map[string][]string) {
 	for pkgName, versions := range deps {
 		if len(versions) > 1 {
-			log.Printf("Package %v has %v versions", pkgName, len(versions))
+			fmt.Printf("Package %v has %v referenced versions\n", pkgName, len(versions))
 			for version, projects := range versions {
-				log.Printf("%v:", version)
+				fmt.Printf("%v:\n", version)
 				for _, project := range projects {
-					log.Printf("\t%v", project)
+					fmt.Printf("\t%v\n", project)
 				}
 			}
 		}
 	}
-	defer file.Close()
 }
 
-func processPackages(file *os.File, state PackagesState) {
-	//log.Printf("Processing %v", file.Name())
+func processPackages(fileName string, state PackagesState) {
+	file, err := os.Open(fileName)
+	processError(err)
+	defer file.Close()
 	decoder := xml.NewDecoder(file)
 	var packages Packages
 
-	err := decoder.Decode(&packages)
-	if err != nil {
-		log.Fatal(err)
-		os.Exit(1)
-	}
+	processError(decoder.Decode(&packages))
 	state.dependencies[file.Name()] = packages.Packages
 }
 
-func processDir(dir *os.File, state PackagesState) {
-	fileInfos, err := dir.Readdir(0)
-	//log.Printf("Processing directory %v", dir.Name())
+func processError(err error) {
 	if err != nil {
 		log.Fatal(err)
 		os.Exit(1)
 	}
+}
+func processDir(dirName string, state PackagesState) {
+	dir, err := os.Open(dirName)
+	processError(err)
+	fileInfos, err := dir.Readdir(0)
+	dir.Close()
+	processError(err)
 	for _, item := range fileInfos {
 		name := item.Name()
 		if item.Mode().IsRegular() && name == "packages.config" {
-			file, err := os.Open(path.Join(dir.Name(), name))
-			if err != nil {
-				log.Fatal(err)
-				os.Exit(1)
-			}
-			defer file.Close()
-			processPackages(file, state)
+			fileName := path.Join(dir.Name(), name)
+			processPackages(fileName, state)
 		} else if item.Mode().IsDir() {
-			subDir, err := os.Open(path.Join(dir.Name(), name))
-			if err != nil {
-				log.Fatal(err)
-				os.Exit(1)
-			}
-			defer subDir.Close()
-			processDir(subDir, state)
+			subDirName := path.Join(dir.Name(), name)
+			processDir(subDirName, state)
 		}
 	}
 }
